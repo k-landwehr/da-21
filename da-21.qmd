@@ -1,0 +1,89 @@
+---
+title: "Daily Assignment 21"
+subtitle: 'Ecosystem Science and Sustainability 330'
+author:
+  - name: Kendall Landwehr
+format: html
+execute:
+  echo: true
+---
+
+```{r}
+library(dataRetrieval)
+library(tidymodels)
+library(dplyr)
+library(tsibble)
+```
+
+
+```{r}
+poudre_flow <- readNWISdv(siteNumber = "06752260",  
+                          parameterCd = "00060",    
+                          startDate = "2013-01-01",   
+                          endDate = "2023-12-31") %>% 
+  renameNWISColumns() %>%                             
+  mutate(Date = yearmonth(Date)) %>%                  
+  group_by(Date)%>%
+  
+  #1: Converting to tsibble
+  summarise(Flow = mean(Flow, na.rm = TRUE)) %>% 
+  as_tsibble(index = Date)
+
+```
+
+```{r}
+#2: Plotting time series data
+
+library(ggplot2)
+
+ggplot(poudre_flow, aes(x = Date, y = Flow)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Monthly Mean Flow at Site 06752260",
+       x = "Date",
+       y = "Flow (cfs)") +
+  theme_minimal()
+
+```
+
+```{r}
+# Animate with plotly 
+
+library(plotly)
+
+ggplot_obj <- ggplot(poudre_flow, aes(x = Date, y = Flow)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Monthly Mean Flow at Site 06752260",
+       x = "Date",
+       y = "Flow (cfs)") +
+  theme_minimal()
+
+ggplotly(ggplot_obj)
+```
+
+```{r}
+#3: Subseries 
+library(feasts)
+library(fabletools)
+library(ggplot2)
+
+gg_season(poudre_flow, Flow) +
+  labs(title = "Seasonal Plot of Streamflow",
+       y = "Flow (cfs)") +
+  theme_minimal()
+
+# In this plot, seasons are defined by the calendar months, assuming monthly seasonablity. Subseries are time series broken down by season, in this case, one for each month. The data shows a sharp increase in streamflow from April to July, likely because of increased temperatures resulting in more snowmelt and runoff. Rainfall is also typically higher during these months. In 2014, there is outlying data from August to October with a sharp increase in streamflow. 
+```
+
+```{r}
+#4: Decompose 
+
+poudre_flow_stl <- poudre_flow %>%
+  model(stl = STL(Flow ~ trend(window = 13) + season(window = "periodic")))
+
+components(poudre_flow_stl) %>%
+  autoplot() +
+  labs(title = "STL Decomposition of Monthly Streamflow")
+
+# The data is showing strong seasonal peak each year during the spring and early summer likely because of snow melt and resulting runoff. There are lows in the late summer and winter. This shows a seasonal pattern, repeating every 12 months. This also shows long-term changes in streamflow. The streamflow remains fairly consistent with slight decreases in streamflow over the years. This slight change could be a result of humans consuming water resources faster than they can be replaced, reducing overall streamflow. 
+```
+
