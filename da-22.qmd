@@ -1,0 +1,128 @@
+---
+title: "Daily Assignment 22"
+subtitle: 'Ecosystem Science and Sustainability 330'
+author:
+  - name: Kendall Landwehr
+format: html
+execute:
+  echo: true
+---
+
+```{r}
+library(dataRetrieval)
+library(tidymodels)
+library(tidyverse)
+library(tibbletime)
+library(modeltime)
+library(yardstick)
+library(dplyr)
+library(tsibble)
+library(lubridate)
+library(timetk)
+```
+# Data prep
+```{r}
+poudre_flow <- readNWISdv(siteNumber = "06752260",  
+                          parameterCd = "00060",    
+                          startDate = "2013-01-01",   
+                          endDate = "2023-12-31") %>% 
+  renameNWISColumns() %>%
+  mutate(Date = as.Date(Date)) %>%
+  mutate(month = floor_date(Date, "month")) %>%
+  group_by(Date) %>%
+  summarise(Flow = mean(Flow, na.rm = TRUE)) %>%
+  ungroup()
+
+# Data split
+splits <- initial_time_split(poudre_flow)
+```
+
+# Create and fit model
+```{r}
+# ARIMA model
+model_arima <- arima_reg() %>%
+  set_engine("auto_arima") %>%
+  fit(Flow ~ Date, data = training(splits))
+
+# Prophet model
+model_prophet <- prophet_reg(seasonality_yearly = TRUE) %>%
+  set_engine("prophet") %>%
+  fit(Flow ~ Date, data = training(splits))
+
+# Combine into modeltime table
+models_tbl <- modeltime_table(
+  model_arima,
+  model_prophet)
+```
+# Forecasting
+```{r}
+# Create future data frame for 12 months
+future_tbl <- poudre_flow %>%
+  future_frame(.date_var = Date, .length_out = "12 months")
+
+# Forecast into future
+forecast_tbl <- models_tbl %>%
+  modeltime_forecast(
+    new_data = future_tbl,
+    actual_data = poudre_flow)
+
+# Plot the forecast
+forecast_tbl %>%
+  plot_modeltime_forecast(.interactive = FALSE)
+```
+
+```{r}
+# Daily streamflow for 2024
+poudre_2024 <- readNWISdv(siteNumber = "06752260",
+                          parameterCd = "00060",
+                          startDate = "2024-01-01",
+                          endDate = "2024-12-31") %>%
+  renameNWISColumns() %>%
+  mutate(Date = as.Date(Date),
+         month = floor_date(Date, "month")) %>%
+  group_by(month) %>%
+  summarise(Observed = mean(Flow, na.rm = TRUE)) %>%
+  rename(Date = month)
+```
+# Clean forecast table
+```{r}
+library(zoo)
+
+forecast_2024 <- forecast_tbl %>%
+  filter(.key == "prediction", .index >= as.Date("2024-01-01")) %>%
+  select(Date = .index, .model_desc, .value)
+
+# Join forecast with observed
+comparison_tbl <- forecast_2024 %>%
+  left_join(poudre_obs_2024, by = "Date") %>%
+  drop_na()
+```
+
+# Compute R-squared 
+```{r}
+# Fit a linear model (LM) to compare predictions and observed data
+lm_model <- lm(Observed ~ .value, data = comparison_tbl)
+
+# Calculate R² (R-squared)
+summary(lm_model)$r.squared
+
+# Interpretation: an R-squared value of 0.3939 means that approximately 39.4% of the variation of observed streamflow can be explained by the model. The model provides a moderate fit for the data but could use a lot of improvement. 
+```
+
+# Generate plots
+```{r}
+library(ggplot2)
+
+ggplot(comparison_tbl, aes(x = .value, y = Observed)) +
+  geom_point(aes(color = .model_desc), size = 2) +  # Scatter plot
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +  # 1:1 line
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # Linear regression line
+  labs(
+    title = "Predicted vs Observed Streamflow (2024)",
+    x = "Predicted Streamflow (cfs)",
+    y = "Observed Streamflow (cfs)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
