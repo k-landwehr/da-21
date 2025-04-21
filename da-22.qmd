@@ -87,42 +87,54 @@ poudre_2024 <- readNWISdv(siteNumber = "06752260",
 # Clean forecast table
 ```{r}
 library(zoo)
+library(tidyr)
 
 forecast_2024 <- forecast_tbl %>%
-  filter(.key == "prediction", .index >= as.Date("2024-01-01")) %>%
-  select(Date = .index, .model_desc, .value)
+  filter(.key == "prediction", .index >= as.Date("2024-01-01") & .index <= as.Date("2024-12-31")) %>%
+  mutate(month = floor_date(.index, "month")) %>%
+  group_by(month) %>%
+  summarise(Predicted = mean(.value, na.rm = TRUE)) %>%
+  rename(Date = month)
 
-# Join forecast with observed
+# Join forecast with observed monthly averages
 comparison_tbl <- forecast_2024 %>%
-  left_join(poudre_obs_2024, by = "Date") %>%
+  left_join(poudre_2024, by = "Date") %>%
   drop_na()
+
+print(comparison_tbl)
+
 ```
 
 # Compute R-squared 
 ```{r}
-# Fit a linear model (LM) to compare predictions and observed data
-lm_model <- lm(Observed ~ .value, data = comparison_tbl)
+# Step 1: Fit a linear model: Observed ~ Predicted
+r2_model <- lm(Observed ~ Predicted, data = comparison_tbl)
 
-# Calculate R² (R-squared)
-summary(lm_model)$r.squared
+# Step 2: Get summary stats and extract R²
+r2_summary <- summary(r2_model)
+r2_value <- r2_summary$r.squared
 
-# Interpretation: an R-squared value of 0.3939 means that approximately 39.4% of the variation of observed streamflow can be explained by the model. The model provides a moderate fit for the data but could use a lot of improvement. 
+# Step 3: Print it
+cat("R-squared value:", round(r2_value, 3), "\n")
+
+
+# Interpretation: an R-squared value of 0.822 means that approximately 82.2% of the variation of observed streamflow can be explained by the model. The model provides a pretty good fit for the data.  
 ```
 
 # Generate plots
 ```{r}
 library(ggplot2)
 
-ggplot(comparison_tbl, aes(x = .value, y = Observed)) +
-  geom_point(aes(color = .model_desc), size = 2) +  # Scatter plot
-  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +  # 1:1 line
-  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # Linear regression line
+ggplot(comparison_tbl, aes(x = Predicted, y = Observed)) +
+  geom_abline(intercept = 0, slope = 1, color = "gray50", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.3) +
+  geom_point(size = 3, color = "darkgreen") +
   labs(
-    title = "Predicted vs Observed Streamflow (2024)",
+    title = "Predicted vs Observed Monthly Streamflow",
+    subtitle = "With 1:1 Line (Gray) and Linear Fit (Blue)",
     x = "Predicted Streamflow (cfs)",
-    y = "Observed Streamflow (cfs)"
-  ) +
+    y = "Observed Streamflow (cfs)") +
   theme_minimal() +
-  theme(legend.position = "none")
+  coord_equal()  
 ```
 
